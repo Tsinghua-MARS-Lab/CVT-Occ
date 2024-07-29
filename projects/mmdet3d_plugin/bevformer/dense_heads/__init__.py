@@ -1,3 +1,3 @@
-from .bevformer_head import BEVFormerHead
-from .occformer_head import OccFormerHead
-from .occformer_head_3d import OccFormerHead3D
+from .occformer_head import CVTOccHead
+from .occformer_head_waymo import CVTOccHeadWaymo
+from .solo_head_occ_waymo import SOLOOccHeadWaymo

@@ -1,4 +1,3 @@
-
 # Note: Considering that MMCV's EvalHook updated its interface in V1.3.16,
 # in order to avoid strong version dependency, we did not directly
 # inherit EvalHook but BaseDistEvalHook.
@@ -28,7 +27,7 @@ def _calc_dynamic_intervals(start_interval, dynamic_interval_list):
 
 class CustomDistEvalHook(BaseDistEvalHook):
 
-    def __init__(self, *args, dynamic_intervals=None,  **kwargs):
+    def __init__(self, *args, dynamic_intervals=None, **kwargs):
         super(CustomDistEvalHook, self).__init__(*args, **kwargs)
         self.use_dynamic_intervals = dynamic_intervals is not None
         if self.use_dynamic_intervals:
@@ -73,7 +72,7 @@ class CustomDistEvalHook(BaseDistEvalHook):
         if tmpdir is None:
             tmpdir = osp.join(runner.work_dir, '.eval_hook')
 
-        from projects.mmdet3d_plugin.bevformer.apis.test import custom_multi_gpu_test # to solve circlur  import
+        from projects.mmdet3d_plugin.bevformer.apis.test import custom_multi_gpu_test  # to solve circlur  import
 
         results = custom_multi_gpu_test(
             runner.model,
@@ -84,8 +83,8 @@ class CustomDistEvalHook(BaseDistEvalHook):
             print('\n')
             runner.log_buffer.output['eval_iter_num'] = len(self.dataloader)
 
-            key_score = self.evaluate(runner, results)
+            # key_score = self.evaluate(runner, results)
+            self.dataloader.dataset.evaluate(results, runner=runner)
+            # if self.save_best:
+            #     self._save_ckpt(runner, key_score)
 
-            if self.save_best:
-                self._save_ckpt(runner, key_score)
-  

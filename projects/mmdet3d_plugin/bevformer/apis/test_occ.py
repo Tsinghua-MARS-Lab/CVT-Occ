@@ -59,21 +59,25 @@ def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
         list: The prediction results.
     """
     model.eval()
-    bbox_results = []
+    pred_results = []
     mask_results = []
+    gt_results=[]
     batch_size=1
     dataset = data_loader.dataset
     rank, world_size = get_dist_info()
     if rank == 0:
         prog_bar = mmcv.ProgressBar(len(dataset))
     time.sleep(2)  # This line can prevent deadlock problem in some cases.
-    have_mask = False
+
     for i, data in enumerate(data_loader):
         with torch.no_grad():
-            result = model(return_loss=False, rescale=True, **data)
+            pred = model(return_loss=False, rescale=True, **data)
+            # print(type(data))
             # encode mask results
-
-            bbox_results.extend(result)
+            voxel_semantics,mask_lidar,mask_camera=data['voxel_semantics'],data['mask_lidar'],data['mask_camera']
+            pred_results.append(pred)
+            mask_results.append(mask_camera)
+            gt_results.append(voxel_semantics)
 
             #if isinstance(result[0], tuple):
             #    assert False, 'this code is for instance segmentation, which our code will not utilize.'
@@ -85,19 +89,19 @@ def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
                 prog_bar.update()
 
     # collect results from all ranks
-    if gpu_collect:
-        bbox_results = collect_results_gpu(bbox_results, len(dataset))
-        if have_mask:
-            mask_results = collect_results_gpu(mask_results, len(dataset))
-        else:
-            mask_results = None
-    else:
-        bbox_results = collect_results_cpu(bbox_results, len(dataset), tmpdir)
-        tmpdir = tmpdir+'_mask' if tmpdir is not None else None
-        if have_mask:
-            mask_results = collect_results_cpu(mask_results, len(dataset), tmpdir)
-        else:
-            mask_results = None
+    # if gpu_collect:
+    #     bbox_results = collect_results_gpu(bbox_results, len(dataset))
+    #     if have_mask:
+    #         mask_results = collect_results_gpu(mask_results, len(dataset))
+    #     else:
+    #         mask_results = None
+    # else:
+    #     bbox_results = collect_results_cpu(bbox_results, len(dataset), tmpdir)
+    #     tmpdir = tmpdir+'_mask' if tmpdir is not None else None
+    #     if have_mask:
+    #         mask_results = collect_results_cpu(mask_results, len(dataset), tmpdir)
+    #     else:
+    #         mask_results = None
 
     if mask_results is None:
         return bbox_results
@@ -149,7 +153,6 @@ def collect_results_cpu(result_part, size, tmpdir=None):
         # remove tmp dir
         shutil.rmtree(tmpdir)
         return ordered_results
-
 
 def collect_results_gpu(result_part, size):
     collect_results_cpu(result_part, size)

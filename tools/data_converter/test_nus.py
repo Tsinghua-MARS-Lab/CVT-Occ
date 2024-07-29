@@ -12,8 +12,11 @@
 #
 # print(my_sample['scene_token'],scene['token'])
 import simplejson as json
+
 # with open ('D:/vis_occ/mini-data/annotations.json','r') as f:
-with open ('D:/annotations.json','r') as f:
-    data=json.load(f)
-    print(data['scene_infos']['scene-0061']['ca9a282c9e77460f8360f564131a8af5']['gt_path'])
+with open("D:/annotations.json", "r") as f:
+    data = json.load(f)
+    print(
+        data["scene_infos"]["scene-0061"]["ca9a282c9e77460f8360f564131a8af5"]["gt_path"]
+    )
     # print(data.keys())

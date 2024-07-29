@@ -1,6 +1,5 @@
 
 # Copyright (c) OpenMMLab. All rights reserved.
-import copy
 import platform
 import random
 from functools import partial
@@ -15,6 +14,7 @@ from mmdet.datasets.samplers import GroupSampler
 from projects.mmdet3d_plugin.datasets.samplers.group_sampler import DistributedGroupSampler
 from projects.mmdet3d_plugin.datasets.samplers.distributed_sampler import DistributedSampler
 from projects.mmdet3d_plugin.datasets.samplers.sampler import build_sampler
+from projects.mmdet3d_plugin.datasets.samplers.my_group_batch_sampler import MyGroupBatchSampler
 
 def build_dataloader(dataset,
                      samples_per_gpu,
@@ -25,6 +25,8 @@ def build_dataloader(dataset,
                      seed=None,
                      shuffler_sampler=None,
                      nonshuffler_sampler=None,
+                     use_streaming=False, 
+                     cfg=None,
                      **kwargs):
     """Build PyTorch DataLoader.
     In distributed training, each GPU/process has a dataloader.
@@ -44,37 +46,51 @@ def build_dataloader(dataset,
         DataLoader: A PyTorch dataloader.
     """
     rank, world_size = get_dist_info()
-    if dist:
-        # DistributedGroupSampler will definitely shuffle the data to satisfy
-        # that images on each GPU are in the same group
-        if shuffle:
-            sampler = build_sampler(shuffler_sampler if shuffler_sampler is not None else dict(type='DistributedGroupSampler'),
-                                     dict(
-                                         dataset=dataset,
-                                         samples_per_gpu=samples_per_gpu,
-                                         num_replicas=world_size,
-                                         rank=rank,
-                                         seed=seed)
-                                     )
-
-        else:
-            sampler = build_sampler(nonshuffler_sampler if nonshuffler_sampler is not None else dict(type='DistributedSampler'),
-                                     dict(
-                                         dataset=dataset,
-                                         num_replicas=world_size,
-                                         rank=rank,
-                                         shuffle=shuffle,
-                                         seed=seed)
-                                     )
-
-        batch_size = samples_per_gpu
+    if use_streaming:
+        # here we use the sequential data loader for streaming inference
+        batch_sampler = MyGroupBatchSampler(
+            dataset,
+            batch_size=1,
+            world_size=world_size,
+            rank=rank,
+            seed=seed,
+            total_epochs=cfg.total_epochs,
+        )
+        batch_size = 1
         num_workers = workers_per_gpu
+        sampler = None
     else:
-        # assert False, 'not support in bevformer'
-        print('WARNING!!!!, Only can be used for obtain inference speed!!!!')
-        sampler = GroupSampler(dataset, samples_per_gpu) if shuffle else None
-        batch_size = num_gpus * samples_per_gpu
-        num_workers = num_gpus * workers_per_gpu
+        if dist:
+            # DistributedGroupSampler will definitely shuffle the data to satisfy
+            # that images on each GPU are in the same group
+            if shuffle:
+                sampler = build_sampler(shuffler_sampler if shuffler_sampler is not None else dict(type='DistributedGroupSampler'),
+                                        dict(
+                                            dataset=dataset,
+                                            samples_per_gpu=samples_per_gpu,
+                                            num_replicas=world_size,
+                                            rank=rank,
+                                            seed=seed)
+                                        )
+
+            else:
+                sampler = build_sampler(nonshuffler_sampler if nonshuffler_sampler is not None else dict(type='DistributedSampler'),
+                                        dict(
+                                            dataset=dataset,
+                                            num_replicas=world_size,
+                                            rank=rank,
+                                            shuffle=shuffle,
+                                            seed=seed)
+                                        )
+
+            batch_size = samples_per_gpu
+            num_workers = workers_per_gpu
+        else:
+            # assert False, 'not support in bevformer'
+            print('WARNING!!!!, Only can be used for obtain inference speed!!!!')
+            sampler = GroupSampler(dataset, samples_per_gpu) if shuffle else None
+            batch_size = num_gpus * samples_per_gpu
+            num_workers = num_gpus * workers_per_gpu
 
     init_fn = partial(
         worker_init_fn, num_workers=num_workers, rank=rank,
@@ -84,6 +100,7 @@ def build_dataloader(dataset,
         dataset,
         batch_size=batch_size,
         sampler=sampler,
+        batch_sampler=batch_sampler if use_streaming else None,
         num_workers=num_workers,
         collate_fn=partial(collate, samples_per_gpu=samples_per_gpu),
         pin_memory=False,

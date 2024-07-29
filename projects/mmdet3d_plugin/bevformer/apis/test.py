@@ -42,6 +42,7 @@ def custom_encode_mask_results(mask_results):
                         dtype='uint8'))[0])  # encoded with RLE
     return [encoded_mask_results]
 
+
 def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
     """Test model with multiple gpus.
     This method tests model with multiple gpus and collects the results
@@ -61,6 +62,7 @@ def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
     model.eval()
     bbox_results = []
     mask_results = []
+    occ_results = []
     dataset = data_loader.dataset
     rank, world_size = get_dist_info()
     if rank == 0:
@@ -70,7 +72,6 @@ def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             result = model(return_loss=False, rescale=True, **data)
-            # encode mask results
             if isinstance(result, dict):
                 if 'bbox_results' in result.keys():
                     bbox_result = result['bbox_results']
@@ -80,9 +81,17 @@ def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
                     mask_result = custom_encode_mask_results(result['mask_results'])
                     mask_results.extend(mask_result)
                     have_mask = True
+                if 'voxel_semantics_preds' in result.keys() and result['voxel_semantics_preds'] is not None:
+                    batch_size = result['voxel_semantics_preds'].shape[0]
+                    occ_results.extend([result])
+                if 'count_matrix' in result.keys():
+                    batch_size = 1
+                    occ_results.extend([result]) # for new occ results
             else:
-                batch_size = len(result)
-                bbox_results.extend(result)
+                batch_size = 1
+                occ_results.extend([result])
+                # batch_size = len(result)
+                # bbox_results.extend(result)
 
             #if isinstance(result[0], tuple):
             #    assert False, 'this code is for instance segmentation, which our code will not utilize.'
@@ -101,16 +110,16 @@ def custom_multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
         else:
             mask_results = None
     else:
-        bbox_results = collect_results_cpu(bbox_results, len(dataset), tmpdir)
-        tmpdir = tmpdir+'_mask' if tmpdir is not None else None
-        if have_mask:
-            mask_results = collect_results_cpu(mask_results, len(dataset), tmpdir)
-        else:
-            mask_results = None
+        # bbox_results = collect_results_cpu(bbox_results, len(dataset), tmpdir)
+        # tmpdir = tmpdir+'_mask' if tmpdir is not None else None
+        # if have_mask:
+        #     mask_results = collect_results_cpu(mask_results, len(dataset), tmpdir)
+        # else:
+        #     mask_results = None
+        tmpdir = tmpdir + '_occ' if tmpdir is not None else None
+        occ_results = collect_results_cpu(occ_results, len(dataset), tmpdir)
 
-    if mask_results is None:
-        return bbox_results
-    return {'bbox_results': bbox_results, 'mask_results': mask_results}
+    return occ_results
 
 
 def collect_results_cpu(result_part, size, tmpdir=None):
@@ -158,7 +167,6 @@ def collect_results_cpu(result_part, size, tmpdir=None):
         # remove tmp dir
         shutil.rmtree(tmpdir)
         return ordered_results
-
 
 def collect_results_gpu(result_part, size):
     collect_results_cpu(result_part, size)

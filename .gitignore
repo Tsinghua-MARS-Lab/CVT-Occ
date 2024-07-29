@@ -121,6 +121,9 @@ data
 *.pkl.json
 *.log.json
 work_dirs/
+ckpts/
+ckpts
+work_dirs
 work_dirs*/
 exps/
 *~
@@ -130,7 +133,7 @@ exps/
 
 # demo
 *.jpg
-*.png
+.png
 *.obj
 *.ply
 *.pt
@@ -138,7 +141,6 @@ exps/
 
 
 
-tmp.py
 *tmp*
 build/
 data/
@@ -146,3 +148,8 @@ output/
 work_dirs
 
 
+result.txt
+*.csv
+projects/configs/vis_weight*
+example.txt
+important.txt

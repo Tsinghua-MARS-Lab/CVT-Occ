@@ -73,7 +73,7 @@ class MyCustomBaseTransformerLayer(BaseModule):
                  attn_cfgs=None,
                  ffn_cfgs=dict(
                      type='FFN',
-                     embed_dims=256,
+                     # embed_dims=256,
                      feedforward_channels=1024,
                      num_fcs=2,
                      ffn_drop=0.,
@@ -91,11 +91,11 @@ class MyCustomBaseTransformerLayer(BaseModule):
             ffn_num_fcs='num_fcs')
         for ori_name, new_name in deprecated_args.items():
             if ori_name in kwargs:
-                warnings.warn(
-                    f'The arguments `{ori_name}` in BaseTransformerLayer '
-                    f'has been deprecated, now you should set `{new_name}` '
-                    f'and other FFN related arguments '
-                    f'to a dict named `ffn_cfgs`. ')
+                # warnings.warn(
+                #     f'The arguments `{ori_name}` in BaseTransformerLayer '
+                #     f'has been deprecated, now you should set `{new_name}` '
+                #     f'and other FFN related arguments '
+                #     f'to a dict named `ffn_cfgs`. ')
                 ffn_cfgs[new_name] = kwargs[ori_name]
 
         super(MyCustomBaseTransformerLayer, self).__init__(init_cfg)
@@ -150,9 +150,12 @@ class MyCustomBaseTransformerLayer(BaseModule):
         assert len(ffn_cfgs) == num_ffns
         for ffn_index in range(num_ffns):
             if 'embed_dims' not in ffn_cfgs[ffn_index]:
-                ffn_cfgs['embed_dims'] = self.embed_dims
+                ffn_cfgs[ffn_index]['embed_dims'] = self.embed_dims
             else:
-                assert ffn_cfgs[ffn_index]['embed_dims'] == self.embed_dims
+                # print()
+                # print('ffn_cfgs ',ffn_cfgs[ffn_index]['embed_dims'] ,self.embed_dims)
+                assert ffn_cfgs[ffn_index]['embed_dims'] == self.embed_dims, \
+                    'ffn:{} self.embed_dims: {}'.format(ffn_cfgs[ffn_index]['embed_dims'],self.embed_dims)
 
             self.ffns.append(
                 build_feedforward_network(ffn_cfgs[ffn_index]))

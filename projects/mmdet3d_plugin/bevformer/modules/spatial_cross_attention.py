@@ -27,7 +27,6 @@ from projects.mmdet3d_plugin.models.utils.bricks import run_time
 ext_module = ext_loader.load_ext(
     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
-
 @ATTENTION.register_module()
 class SpatialCrossAttention(BaseModule):
     """An attention module used in BEVFormer.
@@ -73,78 +72,61 @@ class SpatialCrossAttention(BaseModule):
         xavier_init(self.output_proj, distribution='uniform', bias=0.)
     
     @force_fp32(apply_to=('query', 'key', 'value', 'query_pos', 'reference_points_cam'))
-    def forward(self,
-                query,
-                key,
+    def forward(self, 
+                query, 
+                key, 
                 value,
                 residual=None,
-                query_pos=None,
-                key_padding_mask=None,
-                reference_points=None,
                 spatial_shapes=None,
                 reference_points_cam=None,
                 bev_mask=None,
                 level_start_index=None,
+                query_pos=None,
                 flag='encoder',
                 **kwargs):
         """Forward Function of Detr3DCrossAtten.
         Args:
-            query (Tensor): Query of Transformer with shape
-                (num_query, bs, embed_dims).
-            key (Tensor): The key tensor with shape
-                `(num_key, bs, embed_dims)`.
-            value (Tensor): The value tensor with shape
-                `(num_key, bs, embed_dims)`. (B, N, C, H, W)
-            residual (Tensor): The tensor used for addition, with the
-                same shape as `x`. Default None. If None, `x` will be used.
-            query_pos (Tensor): The positional encoding for `query`.
-                Default: None.
-            key_pos (Tensor): The positional encoding for  `key`. Default
-                None.
-            reference_points (Tensor):  The normalized reference
-                points with shape (bs, num_query, 4),
-                all elements is range in [0, 1], top-left (0,0),
-                bottom-right (1, 1), including padding area.
-                or (N, Length_{query}, num_levels, 4), add
-                additional two dimensions is (w, h) to
-                form reference boxes.
-            key_padding_mask (Tensor): ByteTensor for `query`, with
-                shape [bs, num_key].
-            spatial_shapes (Tensor): Spatial shape of features in
-                different level. With shape  (num_levels, 2),
-                last dimension represent (h, w).
+            query (Tensor): BEV query of Transformer with shape (bs, num_query, embed_dims).
+            key (Tensor): The key tensor is flattened multi level image feature with shape (num_cam, num_value, bs, embed_dims). 
+            value (Tensor): The value tensor is the same as `key`. 
+            residual (Tensor): The tensor used for addition, with the same shape as the output `query`. Default None. If None, `query` will be used.
+            spatial_shapes (Tensor): Spatial shape of features in different level. With shape  (num_levels, 2), last dimension represent (h, w).
+            reference_points_cam (Tensor): projected reference points in the camera coordinate system with shape (num_cam, bs, h*w, num_points_in_pillar, 2).
+            bev_mask (Tensor): binary mask indicating valid points in `reference_points_cam` with shape (num_cam, bs, h*w, num_points_in_pillar).
             level_start_index (Tensor): The start index of each level.
-                A tensor has shape (num_levels) and can be represented
-                as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
+                                        A tensor has shape (num_levels) and can be represented as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
         Returns:
-             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+            query (Tensor): forwarded results with shape (bs, num_query, embed_dims).
         """
-
-        if key is None:
+        
+        # Step 1: prepare the input
+        if key is None: # This is always False in our model
             key = query
-        if value is None:
+        if value is None: # This is always False in our model
             value = key
-
         if residual is None:
             inp_residual = query
             slots = torch.zeros_like(query)
         if query_pos is not None:
             query = query + query_pos
 
-        bs, num_query, _ = query.size()
+        num_cams, multi_level_value_num, bs, embed_dims = key.shape
+        num_points_in_pillar = reference_points_cam.size(3)
 
-        D = reference_points_cam.size(3)
+        # Step 2: keep all non-zero indexes in the bev_mask
         indexes = []
         for i, mask_per_img in enumerate(bev_mask):
-            index_query_per_img = mask_per_img[0].sum(-1).nonzero().squeeze(-1)
+            index_query_per_img = mask_per_img[0].sum(-1, keepdim=False) # sum over the num_points_in_pillar dimension
+            # Here [0] is the index of batch_size dimension, so we should ensure the batch_size is 1.
+            index_query_per_img = index_query_per_img.nonzero() # (n, 1) return the index of all non-zero elements
+            index_query_per_img = index_query_per_img.squeeze(-1)
             indexes.append(index_query_per_img)
         max_len = max([len(each) for each in indexes])
 
-        # each camera only interacts with its corresponding BEV queries. This step can  greatly save GPU memory.
-        queries_rebatch = query.new_zeros(
-            [bs, self.num_cams, max_len, self.embed_dims])
-        reference_points_rebatch = reference_points_cam.new_zeros(
-            [bs, self.num_cams, max_len, D, 2])
+        # Step 3: use the indexes to re-organize the query, reference_points_cam, and bev_mask. Flitter out the out of range elements.
+        # each camera only interacts with its corresponding BEV queries. This step can greatly save GPU memory.
+        queries_rebatch = query.new_zeros([bs, num_cams, max_len, embed_dims]) 
+        reference_points_rebatch = reference_points_cam.new_zeros([bs, num_cams, max_len, num_points_in_pillar, 2])
         
         for j in range(bs):
             for i, reference_points_per_img in enumerate(reference_points_cam):   
@@ -152,26 +134,31 @@ class SpatialCrossAttention(BaseModule):
                 queries_rebatch[j, i, :len(index_query_per_img)] = query[j, index_query_per_img]
                 reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[j, index_query_per_img]
 
-        num_cams, l, bs, embed_dims = key.shape
+        # Step 4: deformable attention
+        # combine the batch_size and num_cams for all the inputs
+        key = key.permute(2, 0, 1, 3).reshape(bs*num_cams, multi_level_value_num, embed_dims)    
+        value = value.permute(2, 0, 1, 3).reshape(bs*num_cams, multi_level_value_num, embed_dims)
+        query_rebatch = queries_rebatch.view(bs*num_cams, max_len, embed_dims)
+        reference_points_rebatch = reference_points_rebatch.view(bs*num_cams, max_len, num_points_in_pillar, 2)
 
-        key = key.permute(2, 0, 1, 3).reshape(
-            bs * self.num_cams, l, self.embed_dims)
-        value = value.permute(2, 0, 1, 3).reshape(
-            bs * self.num_cams, l, self.embed_dims)
+        queries = self.deformable_attention(query=query_rebatch,
+                                            key=key, 
+                                            value=value,
+                                            reference_points=reference_points_rebatch, 
+                                            spatial_shapes=spatial_shapes,
+                                            level_start_index=level_start_index)
+        
+        queries = queries.view(bs, num_cams, max_len, embed_dims)
 
-        queries = self.deformable_attention(query=queries_rebatch.view(bs*self.num_cams, max_len, self.embed_dims), key=key, value=value,
-                                            reference_points=reference_points_rebatch.view(bs*self.num_cams, max_len, D, 2), spatial_shapes=spatial_shapes,
-                                            level_start_index=level_start_index).view(bs, self.num_cams, max_len, self.embed_dims)
+        # Step 5: re-organize the queries back to the original shape
         for j in range(bs):
             for i, index_query_per_img in enumerate(indexes):
                 slots[j, index_query_per_img] += queries[j, i, :len(index_query_per_img)]
-
         count = bev_mask.sum(-1) > 0
         count = count.permute(1, 2, 0).sum(-1)
         count = torch.clamp(count, min=1.0)
         slots = slots / count[..., None]
         slots = self.output_proj(slots)
-
         return self.dropout(slots) + inp_residual
 
 
@@ -290,8 +277,7 @@ class MSDeformableAttention3D(BaseModule):
             value (Tensor): The value tensor with shape
                 `(bs, num_key,  embed_dims)`.
             identity (Tensor): The tensor used for addition, with the
-                same shape as `query`. Default None. If None,
-                `query` will be used.
+                same shape as `query`. Default None. If None, `query` will be used.
             query_pos (Tensor): The positional encoding for `query`.
                 Default: None.
             key_pos (Tensor): The positional encoding for `key`. Default
@@ -323,7 +309,6 @@ class MSDeformableAttention3D(BaseModule):
             query = query + query_pos
 
         if not self.batch_first:
-            # change to (bs, num_query ,embed_dims)
             query = query.permute(1, 0, 2)
             value = value.permute(1, 0, 2)
 
@@ -335,6 +320,7 @@ class MSDeformableAttention3D(BaseModule):
         if key_padding_mask is not None:
             value = value.masked_fill(key_padding_mask[..., None], 0.0)
         value = value.view(bs, num_value, self.num_heads, -1)
+
         sampling_offsets = self.sampling_offsets(query).view(
             bs, num_query, self.num_heads, self.num_levels, self.num_points, 2)
         attention_weights = self.attention_weights(query).view(
@@ -380,8 +366,7 @@ class MSDeformableAttention3D(BaseModule):
 
         #  sampling_locations.shape: bs, num_query, num_heads, num_levels, num_all_points, 2
         #  attention_weights.shape: bs, num_query, num_heads, num_levels, num_all_points
-        #
-
+        
         if torch.cuda.is_available() and value.is_cuda:
             if value.dtype == torch.float16:
                 MultiScaleDeformableAttnFunction = MultiScaleDeformableAttnFunction_fp32

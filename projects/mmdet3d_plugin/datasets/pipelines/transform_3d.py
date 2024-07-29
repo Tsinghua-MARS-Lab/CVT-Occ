@@ -6,52 +6,15 @@ from mmcv.parallel import DataContainer as DC
 import os
 
 
-@PIPELINES.register_module()
-class LoadOccGTFromFile(object):
-    """Load multi channel images from a list of separate channel files.
 
-    Expects results['img_filename'] to be a list of filenames.
-    note that we read image in BGR style to align with opencv.imread
-    Args:
-        to_float32 (bool): Whether to convert the img to float32.
-            Defaults to False.
-        color_type (str): Color type of the file. Defaults to 'unchanged'.
-    """
-
-    def __init__(
-            self,
-            data_root,
-        ):
-        self.data_root = data_root
-
-    def __call__(self, results):
-        # print(results.keys())
-        occ_gt_path = results['occ_gt_path']
-        occ_gt_path = os.path.join(self.data_root,occ_gt_path)
-
-        occ_labels = np.load(occ_gt_path)
-        semantics = occ_labels['semantics']
-        mask_lidar = occ_labels['mask_lidar']
-        mask_camera = occ_labels['mask_camera']
-
-        results['voxel_semantics'] = semantics
-        results['mask_lidar'] = mask_lidar
-        results['mask_camera'] = mask_camera
-
-
-        return results
-
-    def __repr__(self):
-        """str: Return a string that describes the module."""
-        return "{} (data_root={}')".format(
-            self.__class__.__name__, self.data_root)
 
 @PIPELINES.register_module()
 class PadMultiViewImage(object):
-    """Pad the multi-view image.
-    There are two padding modes: (1) pad to a fixed size and (2) pad to the
-    minimum size that is divisible by some number.
-    Added keys are "pad_shape", "pad_fixed_size", "pad_size_divisor",
+    """
+    Pad the multi-view image and add keys "pad_shape".
+    There are two padding modes: (1) pad to a fixed size
+    (2) pad to the minimum size that is divisible by some number.
+    
     Args:
         size (tuple, optional): Fixed padding size.
         size_divisor (int, optional): The divisor of padded size.
@@ -67,20 +30,15 @@ class PadMultiViewImage(object):
         assert size is None or size_divisor is None
 
     def _pad_img(self, results):
-        """Pad images according to ``self.size``."""
+        """Pad images according to `self.size`."""
         if self.size is not None:
-            padded_img = [mmcv.impad(
-                img, shape=self.size, pad_val=self.pad_val) for img in results['img']]
+            padded_img = [mmcv.impad(img, shape=self.size, pad_val=self.pad_val) for img in results['img']]
         elif self.size_divisor is not None:
-            padded_img = [mmcv.impad_to_multiple(
-                img, self.size_divisor, pad_val=self.pad_val) for img in results['img']]
+            padded_img = [mmcv.impad_to_multiple(img, self.size_divisor, pad_val=self.pad_val) for img in results['img']]
         
-        results['ori_shape'] = [img.shape for img in results['img']]
         results['img'] = padded_img
         results['img_shape'] = [img.shape for img in padded_img]
         results['pad_shape'] = [img.shape for img in padded_img]
-        results['pad_fixed_size'] = self.size
-        results['pad_size_divisor'] = self.size_divisor
 
     def __call__(self, results):
         """Call function to pad images, masks, semantic segmentation maps.
@@ -102,8 +60,8 @@ class PadMultiViewImage(object):
 
 @PIPELINES.register_module()
 class NormalizeMultiviewImage(object):
-    """Normalize the image.
-    Added key is "img_norm_cfg".
+    """
+    Normalize the image and add key "img_norm_cfg".
     Args:
         mean (sequence): Mean values of 3 channels.
         std (sequence): Std values of 3 channels.
@@ -118,7 +76,8 @@ class NormalizeMultiviewImage(object):
 
 
     def __call__(self, results):
-        """Call function to normalize images.
+        """
+        Call function to normalize images.
         Args:
             results (dict): Result dict from loading pipeline.
         Returns:
@@ -127,8 +86,7 @@ class NormalizeMultiviewImage(object):
         """
 
         results['img'] = [mmcv.imnormalize(img, self.mean, self.std, self.to_rgb) for img in results['img']]
-        results['img_norm_cfg'] = dict(
-            mean=self.mean, std=self.std, to_rgb=self.to_rgb)
+        results['img_norm_cfg'] = dict(mean=self.mean, std=self.std, to_rgb=self.to_rgb)
         return results
 
     def __repr__(self):
@@ -236,81 +194,112 @@ class PhotoMetricDistortionMultiViewImage:
         repr_str += f'hue_delta={self.hue_delta})'
         return repr_str
 
-
-
 @PIPELINES.register_module()
-class CustomCollect3D(object):
-    """Collect data from the loader relevant to the specific task.
-    This is usually the last stage of the data loader pipeline. Typically keys
-    is set to some subset of "img", "proposals", "gt_bboxes",
-    "gt_bboxes_ignore", "gt_labels", and/or "gt_masks".
-    The "img_meta" item is always populated.  The contents of the "img_meta"
-    dictionary depends on "meta_keys". By default this includes:
-        - 'img_shape': shape of the image input to the network as a tuple \
-            (h, w, c).  Note that images may be zero padded on the \
-            bottom/right if the batch tensor is larger than this shape.
-        - 'scale_factor': a float indicating the preprocessing scale
-        - 'flip': a boolean indicating if image flip transform was used
-        - 'filename': path to the image file
-        - 'ori_shape': original shape of the image as a tuple (h, w, c)
-        - 'pad_shape': image shape after padding
-        - 'lidar2img': transform from lidar to image
-        - 'depth2img': transform from depth to image
-        - 'cam2img': transform from camera to image
-        - 'pcd_horizontal_flip': a boolean indicating if point cloud is \
-            flipped horizontally
-        - 'pcd_vertical_flip': a boolean indicating if point cloud is \
-            flipped vertically
-        - 'box_mode_3d': 3D box mode
-        - 'box_type_3d': 3D box type
-        - 'img_norm_cfg': a dict of normalization information:
-            - mean: per channel mean subtraction
-            - std: per channel std divisor
-            - to_rgb: bool indicating if bgr was converted to rgb
-        - 'pcd_trans': point cloud transformations
-        - 'sample_idx': sample index
-        - 'pcd_scale_factor': point cloud scale factor
-        - 'pcd_rotation': rotation applied to point cloud
-        - 'pts_filename': path to point cloud file.
+class RandomScaleImageMultiViewImage(object):
+    """
+    Random scale the image
     Args:
-        keys (Sequence[str]): Keys of results to be collected in ``data``.
-        meta_keys (Sequence[str], optional): Meta keys to be converted to
-            ``mmcv.DataContainer`` and collected in ``data[img_metas]``.
-            Default: ('filename', 'ori_shape', 'img_shape', 'lidar2img',
-            'depth2img', 'cam2img', 'pad_shape', 'scale_factor', 'flip',
-            'pcd_horizontal_flip', 'pcd_vertical_flip', 'box_mode_3d',
-            'box_type_3d', 'img_norm_cfg', 'pcd_trans',
-            'sample_idx', 'pcd_scale_factor', 'pcd_rotation', 'pts_filename')
+        scales (list): List of scales to choose from.
+                       If the list contains only one scale, then the scale is fixed.
     """
 
-    def __init__(self,
-                 keys,
-                 meta_keys=('filename', 'ori_shape', 'img_shape', 'lidar2img','ego2lidar',
-                            'depth2img', 'cam2img', 'pad_shape',
-                            'scale_factor', 'flip', 'pcd_horizontal_flip',
-                            'pcd_vertical_flip', 'box_mode_3d', 'box_type_3d',
-                            'img_norm_cfg', 'pcd_trans', 'sample_idx', 'prev_idx', 'next_idx',
-                            'pcd_scale_factor', 'pcd_rotation', 'pts_filename',
-                            'transformation_3d_flow', 'scene_token',
-                            'can_bus',
-                            )):
-        self.keys = keys
-        self.meta_keys = meta_keys
+    def __init__(self, scales=[]):
+        self.scales = scales
 
     def __call__(self, results):
-        """Call function to collect keys in results. The keys in ``meta_keys``
+        """
+        Call function to pad images, masks, semantic segmentation maps.
+        Args:
+            results (dict): Result dict from loading pipeline.
+        Returns:
+            dict: Updated result dict.
+        """
+
+        # Step 1: sample a random scale
+        rand_scale = np.random.choice(self.scales)
+
+        # Step 2: scale the image
+        y_size = [int(img.shape[0] * rand_scale) for img in results['img']]
+        x_size = [int(img.shape[1] * rand_scale) for img in results['img']]
+        results['img'] = [mmcv.imresize(img, (x_size[idx], y_size[idx]), return_scale=False) for idx, img in enumerate(results['img'])]
+
+        # Step 3: update the `lidar2img` and `intrinsic` transformation matrix
+        scale_factor = np.eye(4)
+        scale_factor[0, 0] *= rand_scale
+        scale_factor[1, 1] *= rand_scale                  
+        lidar2img = [scale_factor @ l2i for l2i in results['lidar2img']]
+        results['lidar2img'] = lidar2img
+        cam_intrinsic = [scale_factor @ cam_intr for cam_intr in results['cam_intrinsic']]
+        results['cam_intrinsic'] = cam_intrinsic
+
+        # Step 4: update the image shape
+        results['img_shape'] = [img.shape for img in results['img']]
+
+        return results
+
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += f'(size={self.scales}, '
+        return repr_str
+    
+@PIPELINES.register_module()
+class CustomCollect3D(object):
+    """
+    Collect data from the loader relevant to the specific task.
+    This is usually the last stage of the data loader pipeline. 
+    Args:
+        keys (Sequence[str]): Keys of results to be collected in `data`.
+        meta_keys (Sequence[str], optional): Meta keys to be converted to
+            `mmcv.DataContainer` and collected in `data[img_metas]`.
+    """
+
+    def __init__(self, keys=None, meta_keys=None,):
+        self.keys = keys
+        self.meta_keys = meta_keys
+        assert self.meta_keys is not None, 'meta_keys must be set'
+
+    def __call__(self, results):
+        """
+        Call function to collect keys in results. The keys in `meta_keys`
         will be converted to :obj:`mmcv.DataContainer`.
         Args:
             results (dict): Result dict contains the data to collect.
         Returns:
-            dict: The result dict contains the following keys
-                - keys in ``self.keys``
-                - ``img_metas``
+            dict: The result dict contains the following keys in `self.keys` and `img_metas`
         """
-       
+
+        if 'rots' in self.meta_keys:
+            sensor2ego_list = results['sensor2ego'] # list of 4x4 matrices
+            rots_list = [sensor2ego[:3, :3] for sensor2ego in sensor2ego_list] # list of 3x3 matrices
+            rots = np.stack(rots_list, axis=0) # (num_cams, 3, 3)
+            results['rots'] = rots
+            trans_list = [sensor2ego[:3, 3] for sensor2ego in sensor2ego_list] # list of 3x1 vectors
+            trans = np.stack(trans_list, axis=0) # (num_cams, 3)
+            results['trans'] = trans
+            
+            cam_intrinsic_list = results['cam_intrinsic'] # list of 4x4 matrices
+            intrins_list = [cam_intrinsic[:3, :3] for cam_intrinsic in cam_intrinsic_list] # list of 3x3 matrices
+            intrins = np.stack(intrins_list, axis=0) # (num_cams, 3, 3)
+            results['intrins'] = intrins
+
+            post_rots_list = [np.eye(3) for sensor2ego in sensor2ego_list] # list of 3x3 matrices
+            post_rots = np.stack(post_rots_list, axis=0) # (num_cams, 3, 3)
+            results['post_rots'] = post_rots
+            post_trans_list = [np.zeros(3) for sensor2ego in sensor2ego_list] # list of 3x1 vectors
+            post_trans = np.stack(post_trans_list, axis=0) # (num_cams, 3)
+            results['post_trans'] = post_trans
+            
+            frame_id = results['sample_idx'] % 1000
+            if frame_id == 0:
+                results['start_of_sequence'] = 1
+            else:
+                results['start_of_sequence'] = 0
+            results['sequence_group_idx'] = results['sample_idx'] % 1000000 // 1000
+
         data = {}
         img_metas = {}
-      
+
         for key in self.meta_keys:
             if key in results:
                 img_metas[key] = results[key]
@@ -320,50 +309,8 @@ class CustomCollect3D(object):
             data[key] = results[key]
         return data
 
+
     def __repr__(self):
         """str: Return a string that describes the module."""
         return self.__class__.__name__ + \
-            f'(keys={self.keys}, meta_keys={self.meta_keys})'
-
-
-
-@PIPELINES.register_module()
-class RandomScaleImageMultiViewImage(object):
-    """Random scale the image
-    Args:
-        scales
-    """
-
-    def __init__(self, scales=[]):
-        self.scales = scales
-        assert len(self.scales)==1
-
-    def __call__(self, results):
-        """Call function to pad images, masks, semantic segmentation maps.
-        Args:
-            results (dict): Result dict from loading pipeline.
-        Returns:
-            dict: Updated result dict.
-        """
-        rand_ind = np.random.permutation(range(len(self.scales)))[0]
-        rand_scale = self.scales[rand_ind]
-
-        y_size = [int(img.shape[0] * rand_scale) for img in results['img']]
-        x_size = [int(img.shape[1] * rand_scale) for img in results['img']]
-        scale_factor = np.eye(4)
-        scale_factor[0, 0] *= rand_scale
-        scale_factor[1, 1] *= rand_scale
-        results['img'] = [mmcv.imresize(img, (x_size[idx], y_size[idx]), return_scale=False) for idx, img in
-                          enumerate(results['img'])]
-        lidar2img = [scale_factor @ l2i for l2i in results['lidar2img']]
-        results['lidar2img'] = lidar2img
-        results['img_shape'] = [img.shape for img in results['img']]
-        results['ori_shape'] = [img.shape for img in results['img']]
-
-        return results
-
-
-    def __repr__(self):
-        repr_str = self.__class__.__name__
-        repr_str += f'(size={self.scales}, '
-        return repr_str
+               f'(keys={self.keys}, meta_keys={self.meta_keys})'

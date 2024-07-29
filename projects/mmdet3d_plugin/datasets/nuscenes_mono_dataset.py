@@ -395,7 +395,7 @@ class CustomNuScenesMonoDataset(CocoDataset):
         """
         from nuscenes import NuScenes
         #from nuscenes.eval.detection.evaluate import NuScenesEval
-        from .nuscnes_eval import NuScenesEval_custom
+        from .nuscenes_eval import NuScenesEval_custom
         output_dir = osp.join(*osp.split(result_path)[:-1])
         self.nusc = NuScenes(
             version=self.version, dataroot=self.data_root, verbose=False)

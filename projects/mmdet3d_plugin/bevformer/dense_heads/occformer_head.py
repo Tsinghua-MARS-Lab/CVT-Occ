@@ -4,266 +4,299 @@
 #  Modified by Zhiqi Li
 # ---------------------------------------------
 
-import copy
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from mmcv.cnn import Linear, bias_init_with_prob
-from mmcv.utils import TORCH_VERSION, digit_version
-
-from mmdet.core import (multi_apply, multi_apply, reduce_mean)
-from mmdet.models.utils.transformer import inverse_sigmoid
-from mmdet.models import HEADS
-from mmdet.models.dense_heads import DETRHead
-from mmdet3d.core.bbox.coders import build_bbox_coder
-from projects.mmdet3d_plugin.core.bbox.util import normalize_bbox
 from mmcv.cnn.bricks.transformer import build_positional_encoding
 from mmcv.runner import force_fp32, auto_fp16
-from projects.mmdet3d_plugin.models.utils.bricks import run_time
-import numpy as np
-import mmcv
-import cv2 as cv
-from projects.mmdet3d_plugin.models.utils.visual import save_tensor
 from mmcv.cnn.bricks.transformer import build_positional_encoding
+from mmcv.runner import BaseModule, force_fp32
 from mmdet.models.utils import build_transformer
 from mmdet.models.builder import build_loss
-from mmcv.runner import BaseModule, force_fp32
+from mmdet.models import HEADS
+from mmdet3d.core.bbox.coders import build_bbox_coder
+from mmdet.models import LOSSES as mmdet_LOSSES
 
 @HEADS.register_module()
-class OccFormerHead(BaseModule):
-    """Head of Detr3D.
-    Args:
-        with_box_refine (bool): Whether to refine the reference points
-            in the decoder. Defaults to False.
-        as_two_stage (bool) : Whether to generate the proposal from
-            the outputs of encoder.
-        transformer (obj:`ConfigDict`): ConfigDict is used for building
-            the Encoder and Decoder.
-        bev_h, bev_w (int): spatial shape of BEV queries.
-    """
-
+class CVTOccHead(BaseModule):
     def __init__(self,
-                 *args,
                  with_box_refine=False,
                  as_two_stage=False,
                  transformer=None,
                  bbox_coder=None,
-                 num_cls_fcs=2,
-                 code_weights=None,
-                 bev_h=30,
-                 bev_w=30,
+                 bev_h=200,
+                 bev_w=200,
+                 num_classes=18,
+                 occ_thr=0.3,
                  loss_occ=None,
-                 use_mask=False,
+                 use_camera_mask=False,
+                 use_lidar_mask=False,
+                 use_free_mask=False,
+                 use_focal_loss=False,
                  positional_encoding=None,
+                 use_refine_feat_loss=False,
+                 refine_feat_loss_weight=None,
                  **kwargs):
-
+        super(CVTOccHead, self).__init__()
+        self.use_camera_mask = use_camera_mask
+        self.use_lidar_mask = use_lidar_mask
+        self.use_free_mask = use_free_mask
+        self.use_focal_loss = use_focal_loss
         self.bev_h = bev_h
         self.bev_w = bev_w
+        self.occ_thr = occ_thr
         self.fp16_enabled = False
-        self.num_classes=kwargs['num_classes']
-        self.use_mask=use_mask
-
+        self.num_classes = num_classes
+        if use_free_mask:
+            self.num_classes = self.num_classes - 1
         self.with_box_refine = with_box_refine
         self.as_two_stage = as_two_stage
         if self.as_two_stage:
             transformer['as_two_stage'] = self.as_two_stage
-        if 'code_size' in kwargs:
-            self.code_size = kwargs['code_size']
-        else:
-            self.code_size = 10
-        if code_weights is not None:
-            self.code_weights = code_weights
-        else:
-            self.code_weights = [1.0, 1.0, 1.0,
-                                 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2]
-
-
-
         self.bbox_coder = build_bbox_coder(bbox_coder)
-        self.pc_range = self.bbox_coder.pc_range
-        self.real_w = self.pc_range[3] - self.pc_range[0]
-        self.real_h = self.pc_range[4] - self.pc_range[1]
-        self.num_cls_fcs = num_cls_fcs - 1
-        super(OccFormerHead, self).__init__()
-
         self.loss_occ = build_loss(loss_occ)
-        self.positional_encoding = build_positional_encoding(
-            positional_encoding)
+        self.use_refine_feat_loss = use_refine_feat_loss
+        _loss=dict(type='FocalLoss', use_sigmoid=True, gamma=2.0, alpha=0.25, loss_weight=1.0) # refine_feat_w not sigmoid, so here use_sigmoid=True
+        self.refine_feat_loss_func = mmdet_LOSSES.build(_loss)
+        self.refine_feat_loss_weight = refine_feat_loss_weight
+
+        self.positional_encoding = build_positional_encoding(positional_encoding)
         self.transformer = build_transformer(transformer)
         self.embed_dims = self.transformer.embed_dims
-
         if not self.as_two_stage:
-            self.bev_embedding = nn.Embedding(
-                self.bev_h * self.bev_w, self.embed_dims)
-    # def _init_layers(self):
-    #     """Initialize classification branch and regression branch of head."""
-    #     cls_branch = []
-    #     for _ in range(self.num_reg_fcs):
-    #         cls_branch.append(Linear(self.embed_dims, self.embed_dims))
-    #         cls_branch.append(nn.LayerNorm(self.embed_dims))
-    #         cls_branch.append(nn.ReLU(inplace=True))
-    #     cls_branch.append(Linear(self.embed_dims, self.cls_out_channels))
-    #     fc_cls = nn.Sequential(*cls_branch)
-    #
-    #     reg_branch = []
-    #     for _ in range(self.num_reg_fcs):
-    #         reg_branch.append(Linear(self.embed_dims, self.embed_dims))
-    #         reg_branch.append(nn.ReLU())
-    #     reg_branch.append(Linear(self.embed_dims, self.code_size))
-    #     reg_branch = nn.Sequential(*reg_branch)
-    #
-    #     def _get_clones(module, N):
-    #         return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-    #
-    #     # last reg_branch is used to generate proposal from
-    #     # encode feature map when as_two_stage is True.
-    #     num_pred = (self.transformer.decoder.num_layers + 1) if \
-    #         self.as_two_stage else self.transformer.decoder.num_layers
-    #
-    #     if self.with_box_refine:
-    #         self.cls_branches = _get_clones(fc_cls, num_pred)
-    #         self.reg_branches = _get_clones(reg_branch, num_pred)
-    #     else:
-    #         self.cls_branches = nn.ModuleList(
-    #             [fc_cls for _ in range(num_pred)])
-    #         self.reg_branches = nn.ModuleList(
-    #             [reg_branch for _ in range(num_pred)])
-    #
-    #     if not self.as_two_stage:
-    #         self.bev_embedding = nn.Embedding(
-    #             self.bev_h * self.bev_w, self.embed_dims)
-    #         self.query_embedding = nn.Embedding(self.num_query,
-    #                                             self.embed_dims * 2)
+            self.bev_embedding = nn.Embedding(self.bev_h * self.bev_w, self.embed_dims)
 
     def init_weights(self):
         """Initialize weights of the DeformDETR head."""
         self.transformer.init_weights()
-        # if self.loss_cls.use_sigmoid:
-        #     bias_init = bias_init_with_prob(0.01)
-        #     for m in self.cls_branches:
-        #         nn.init.constant_(m[-1].bias, bias_init)
 
-    @auto_fp16(apply_to=('mlvl_feats'))
-    def forward(self, mlvl_feats, img_metas, prev_bev=None, only_bev=False, test=False):
-        """Forward function.
-        Args:
-            mlvl_feats (tuple[Tensor]): Features from the upstream
-                network, each is a 5D-tensor with shape
-                (B, N, C, H, W).
-            prev_bev: previous bev featues
-            only_bev: only compute BEV features with encoder.
-        Returns:
-            all_cls_scores (Tensor): Outputs from the classification head, \
-                shape [nb_dec, bs, num_query, cls_out_channels]. Note \
-                cls_out_channels should includes background.
-            all_bbox_preds (Tensor): Sigmoid outputs from the regression \
-                head with normalized coordinate format (cx, cy, w, l, cz, h, theta, vx, vy). \
-                Shape [nb_dec, bs, num_query, 9].
+    @auto_fp16(apply_to=('multi_level_feats'))
+    def forward(self,
+                multi_level_feats, 
+                cur_img_metas, 
+                prev_bev_list=[], 
+                prev_img_metas=[],
+                only_bev=False,
+                **kwargs):
         """
-        bs, num_cam, _, _, _ = mlvl_feats[0].shape
-        dtype = mlvl_feats[0].dtype
-        object_query_embeds = None
-        bev_queries = self.bev_embedding.weight.to(dtype)
+        Forward function.
+        Args:
+            multi_level_feats (list[torch.Tensor]): Current multi level img features from the upstream network.
+                                                    Each is a 5D-tensor img_feats with shape (bs, num_cams, embed_dims, h, w).
+            cur_img_metas (list[dict]): Meta information of each sample. The list has length of batch size.
+            prev_bev_list (list[torch.Tensor]): BEV features of previous frames. Each has shape (bs, bev_h*bev_w, embed_dims). 
+            prev_img_metas (list[dict[dict]]): Meta information of each sample.
+                                               The list has length of batch size.
+                                               The dict has keys len_queue-1-prev_bev_list_len, ..., len_queue-2. 
+                                               The element of each key is a dict.
+                                               So each dict has length of prev_bev_list_len. 
+            only_bev: If this flag is true. The head only computes BEV features with encoder.
+        Returns:
+            If only_bev:
+            _bev_embed (torch.Tensor): BEV features of the current frame with shape (bs, bev_h*bev_w, embed_dims). 
+            else: 
+            outs (dict): with keys "bev_embed, occ, extra".
+            - bev_embed (torch.Tensor): BEV features of the current frame with shape (bs, bev_h*bev_w, embed_dims).
+            - occ (torch.Tensor): Predicted occupancy features with shape (bs, w, h, total_z, c).
+            - extra (dict): extra information. if 'costvolume' in self.transformer, it will have 'refine_feat_w' key.
+        """
 
-        bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
-                               device=bev_queries.device).to(dtype)
+        # Step 1: initialize BEV queries and mask
+        bs = multi_level_feats[0].shape[0]
+        dtype = multi_level_feats[0].dtype
+        bev_queries = self.bev_embedding.weight.to(dtype)
+        bev_mask = torch.zeros((bs, self.bev_h, self.bev_w), device=bev_queries.device).to(dtype)
         bev_pos = self.positional_encoding(bev_mask).to(dtype)
 
-        if only_bev:  # only use encoder to obtain BEV features, TODO: refine the workaround
-            return self.transformer.get_bev_features(
-                mlvl_feats,
-                bev_queries,
-                self.bev_h,
-                self.bev_w,
-                grid_length=(self.real_h / self.bev_h,
-                             self.real_w / self.bev_w),
-                bev_pos=bev_pos,
-                img_metas=img_metas,
-                prev_bev=prev_bev,
-            )
+        # Step 2: get BEV features
+        if only_bev:
+            if len(prev_bev_list) == 0:
+                prev_bev = None
+            else:
+                prev_bev = prev_bev_list[-1]
+
+            outputs = self.transformer.get_bev_features(multi_level_feats,
+                                                        bev_queries,
+                                                        bev_pos,
+                                                        cur_img_metas,
+                                                        prev_bev,
+                                                        **kwargs)
+            _bev_embed = outputs['bev_embed']
+            
+            return _bev_embed
+
         else:
-            outputs = self.transformer(
-                mlvl_feats,
-                bev_queries,
-                object_query_embeds,
-                self.bev_h,
-                self.bev_w,
-                grid_length=(self.real_h / self.bev_h,
-                             self.real_w / self.bev_w),
-                bev_pos=bev_pos,
-                reg_branches=None,  # noqa:E501
-                cls_branches=None,
-                img_metas=img_metas,
-                prev_bev=prev_bev
-            )
-        bev_embed, occ_outs = outputs
-        # bev_embed, hs, init_reference, inter_references = outputs
-        #
-        #
-        # outs = {
-        #     'bev_embed': bev_embed,
-        #     'all_cls_scores': outputs_classes,
-        #     'all_bbox_preds': outputs_coords,
-        #     'enc_cls_scores': None,
-        #     'enc_bbox_preds': None,
-        # }
+            outputs = self.transformer(multi_level_feats,
+                                       bev_queries,
+                                       bev_pos,
+                                       cur_img_metas,
+                                       prev_bev_list,
+                                       prev_img_metas,
+                                       **kwargs)
+            
+            bev_for_history, occ_outs, extra = outputs
+            outs = {'bev_embed': bev_for_history, 'occ':occ_outs, 'extra':extra}
 
-        # if test:
-        #     return bev_embed, occ_outs
-        # else:
-        #     return occ_outs
-        outs = {
-            'bev_embed': bev_embed,
-            'occ':occ_outs,
-        }
-
-        return outs
+            return outs
 
     @force_fp32(apply_to=('preds_dicts'))
-    def loss(self,
-             # gt_bboxes_list,
-             # gt_labels_list,
-             voxel_semantics_list,
-             mask_camera_list,
+    def loss(self, voxel_semantics,
              preds_dicts,
-             gt_bboxes_ignore=None,
-             img_metas=None):
+             mask_camera=None,
+             mask_lidar=None,
+             **kwargs):
+        '''
+        Loss function. 
+        Args:
+            voxel_semantics (torch.Tensor): Shape (bs, w, h, total_z)
+            valid_mask (torch.Tensor): 1 represent valid voxel, 0 represent invalid voxel. 
+                                       Directly get from the data loader. shape (bs, w, h, total_z)
+            preds_dicts (dict): result from head with keys "bev_embed, occ, extra".
+            - occ (torch.Tensor): Predicted occupancy features with shape (bs, w, h, total_z, c). 
+        Returns:
+            loss_dict (dict): Losses of different branch. 
+                              Default cvtocc model has refine_feat_loss loss and loss_occ_coheam loss. 
+        '''
 
-        loss_dict=dict()
-        occ=preds_dicts['occ']
-        assert voxel_semantics_list.min()>=0 and voxel_semantics_list.max()<=17
-        losses = self.loss_single(voxel_semantics_list,mask_camera_list,occ)
-        loss_dict['loss_occ']=losses
+        loss_dict = dict()
+        occ = preds_dicts['occ']
+        assert voxel_semantics.min() >= 0 and voxel_semantics.max() <= self.num_classes-1, "semantic gt out of range"
+        losses = self.loss_single(voxel_semantics, mask_camera, occ)
+        loss_dict['loss_occ'] = losses
+
+        extra = preds_dicts['extra']
+        if self.use_refine_feat_loss:
+            if 'refine_feat_w' in extra: # has the key means it will not be None
+                refine_feat_w = extra['refine_feat_w']
+                loss_dict['refine_feat_loss'] = self.get_refine_feat_loss(voxel_semantics, refine_feat_w, mask_camera, mask_lidar)
+            else:
+                loss_dict['refine_feat_loss'] = occ.reshape(-1).sum() * 0
+
         return loss_dict
+    
+    def get_refine_feat_loss(self, voxel_semantics, refine_feat_w, mask_camera=None, mask_lidar=None):
+        """
+        Calculate refine_feat_loss from refine_feat_w
+        Args:
+            refine_feat_w (torch.Tensor): The weight without sigmoid. shape (bev_w, bev_h, total_z, 2).
+        Returns:
+            refine_feat_loss (float): 
+        """
+        
+        # Step 1: reshape refine_feat_w 
+        refine_feat_w = refine_feat_w.reshape(-1, refine_feat_w.shape[-1]) # (w*h*total_z, 2)
 
-    def loss_single(self,voxel_semantics,mask_camera,preds_dicts):
-        if self.use_mask:
-            voxel_semantics=voxel_semantics.reshape(-1)
-            preds_dicts=preds_dicts.reshape(-1,self.num_classes)
-            mask_camera=mask_camera.reshape(-1)
-            num_total_samples=mask_camera.sum()
-            loss_occ=self.loss_occ(preds_dicts,voxel_semantics,mask_camera, avg_factor=num_total_samples)
+        # Step 2: get the ground truth for refine feat weight from the occupancy ground truth. 
+        refine_feat_gt = (voxel_semantics != self.num_classes-1)
+        refine_feat_gt = refine_feat_gt.reshape(-1).long()
+
+        # Step 3: use `mask_camera` and `mask_lidar` to filter out the invalid points
+        mask = torch.ones_like(voxel_semantics)
+        if self.use_lidar_mask:
+            mask = torch.logical_and(mask, mask_lidar)
+        if self.use_camera_mask:
+            mask = torch.logical_and(mask, mask_camera)
+
+        mask = mask.reshape(-1)
+        refine_feat_w_masked = refine_feat_w[mask]
+        refine_feat_gt_masked = refine_feat_gt[mask]
+
+        # Step 4: calculate the loss
+        refine_feat_loss = self.refine_feat_loss_func(refine_feat_w_masked, refine_feat_gt_masked)
+        refine_feat_loss = self.refine_feat_loss_weight * refine_feat_loss
+
+        return refine_feat_loss
+
+    def loss_single(self, voxel_semantics, mask_camera, preds_dicts):
+        if self.use_camera_mask:
+            voxel_semantics = voxel_semantics.reshape(-1)
+            preds_dicts = preds_dicts.reshape(-1,self.num_classes)
+            mask_camera = mask_camera.reshape(-1)
+            num_total_samples = mask_camera.sum()
+            loss_occ = self.loss_occ(preds_dicts,
+                                     voxel_semantics,
+                                     mask_camera, 
+                                     avg_factor=num_total_samples)
+            
         else:
             voxel_semantics = voxel_semantics.reshape(-1)
             preds_dicts = preds_dicts.reshape(-1, self.num_classes)
-            loss_occ = self.loss_occ(preds_dicts, voxel_semantics,)
-        return loss_occ
+            if self.use_free_mask:
+                free_mask = voxel_semantics < self.num_classes
+                voxel_semantics = voxel_semantics[free_mask]
+                preds_dicts = preds_dicts[free_mask]
+                pos_num = voxel_semantics.shape[0]
 
+            else:
+                pos_num = voxel_semantics.shape[0]
+
+            loss_occ = self.loss_occ(preds_dicts, voxel_semantics.long(), avg_factor=pos_num)
+
+        return loss_occ
+    
     @force_fp32(apply_to=('preds_dicts'))
-    def get_occ(self, preds_dicts, img_metas, rescale=False):
-        """Generate bboxes from bbox head predictions.
+    def get_occ(self, preds_dicts):
+        """
+        Generate bboxes from bbox head predictions.
         Args:
             preds_dicts (tuple[list[dict]]): Prediction results.
-            img_metas (list[dict]): Point cloud and image's meta info.
         Returns:
-            list[dict]: Decoded bbox, scores and labels after nms.
+            occ_out (torch.Tensor): Predicted occupancy map with shape (bs, h, w, z).
         """
-        # return self.transformer.get_occ(
-        #     preds_dicts, img_metas, rescale=rescale)
-        # print(img_metas[0].keys())
-        occ_out=preds_dicts['occ']
-        occ_score=occ_out.softmax(-1)
-        occ_score=occ_score.argmax(-1)
 
+        occ_out = preds_dicts['occ']
+        if self.use_focal_loss:
+            # Default value of this flag is False
+            occ_out = occ_out.sigmoid()
 
-        return occ_score
+        if self.use_free_mask:
+            # Default value of this flag is False
+            bs, h, w, z, channels = occ_out.shape
+            occ_out = occ_out.reshape(bs, -1, self.num_classes)
+            occ_out = torch.cat((occ_out, torch.ones_like(occ_out)[:,:, :1] * self.occ_thr), dim=-1)
+            occ_out = occ_out.reshape(bs,h,w,z,-1)
+        else:
+            occ_out = occ_out.softmax(-1)
+
+        occ_out = occ_out.argmax(-1)
+
+        return occ_out
+
+    def compute_count_matrix(self, gtocc, predocc):
+        """
+        Calculate count matrix.
+        Args:
+            voxel_semantics (torch.Tensor): semantic occpuancy ground truth.
+            voxel_semantics_preds (torch.Tensor): predicted semantic occpuancy.
+            both input are masked
+        Returns:
+            count_matrix (numpy.ndarray): count_matrix[i][j] counts the number of voxel with gt type i and pred type j. shape (num_classes, num_classes)
+        """
+
+        n_cl = self.num_classes
+        count_matrix = torch.zeros((n_cl, n_cl), device='cuda')
+        correct_idx = (gtocc >= 0) & (gtocc < n_cl)
+        count_matrix = torch.bincount(n_cl * gtocc[correct_idx].to(torch.int) + predocc[correct_idx].to(torch.int), 
+                                        weights=None, minlength=n_cl ** 2).reshape(n_cl, n_cl)
+        
+        return count_matrix
+
+    def eval_metrics(self, voxel_semantics, voxel_semantics_preds, camera_mask):
+        """
+        Evaluation.
+        Args:
+            voxel_semantics (torch.Tensor): semantic occpuancy ground truth.
+            voxel_semantics_preds (torch.Tensor): predicted semantic occpuancy.
+            camera_mask (torch.Tensor): camera mask.
+            all of them have shape (bs, w, h, total_z)
+        Returns: 
+            results (dict): with key "count_matrix".
+            - count_matrix (numpy.ndarray): count_matrix[i][j] counts the number of voxel with gt type i and pred type j. shape (num_classes, num_classes)
+        """
+
+        masked_semantics_gt = voxel_semantics[camera_mask]
+        masked_semantics_pred = voxel_semantics_preds[camera_mask]
+        count_matrix = self.compute_count_matrix(gtocc=masked_semantics_gt, predocc=masked_semantics_pred)
+
+        results = {"count_matrix": count_matrix.cpu().numpy()}
+
+        return results

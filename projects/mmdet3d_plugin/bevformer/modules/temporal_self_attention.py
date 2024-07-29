@@ -21,10 +21,9 @@ from mmcv.utils import ext_loader
 ext_module = ext_loader.load_ext(
     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
-
 @ATTENTION.register_module()
 class TemporalSelfAttention(BaseModule):
-    """An attention module used in BEVFormer based on Deformable-Detr.
+    """An attention module used in BEVFormer based on "Deformable-Detr"!!!.
 
     `Deformable DETR: Deformable Transformers for End-to-End Object Detection.
     <https://arxiv.org/pdf/2010.04159.pdf>`_.
@@ -49,7 +48,7 @@ class TemporalSelfAttention(BaseModule):
         init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
             Default: None.
         num_bev_queue (int): In this version, we only use one history BEV and one currenct BEV.
-         the length of BEV queue is 2.
+         the length of BEV queue is 2.!!!
     """
 
     def __init__(self,
@@ -127,66 +126,41 @@ class TemporalSelfAttention(BaseModule):
 
     def forward(self,
                 query,
-                key=None,
-                value=None,
+                key,
+                value,
                 identity=None,
-                query_pos=None,
-                key_padding_mask=None,
                 reference_points=None,
                 spatial_shapes=None,
                 level_start_index=None,
+                query_pos=None,
+                key_padding_mask=None,
                 flag='decoder',
-
                 **kwargs):
         """Forward Function of MultiScaleDeformAttention.
-
         Args:
-            query (Tensor): Query of Transformer with shape
-                (num_query, bs, embed_dims).
-            key (Tensor): The key tensor with shape
-                `(num_key, bs, embed_dims)`.
-            value (Tensor): The value tensor with shape
-                `(num_key, bs, embed_dims)`.
-            identity (Tensor): The tensor used for addition, with the
-                same shape as `query`. Default None. If None,
-                `query` will be used.
-            query_pos (Tensor): The positional encoding for `query`.
-                Default: None.
-            key_pos (Tensor): The positional encoding for `key`. Default
-                None.
-            reference_points (Tensor):  The normalized reference
-                points with shape (bs, num_query, num_levels, 2),
-                all elements is range in [0, 1], top-left (0,0),
-                bottom-right (1, 1), including padding area.
-                or (N, Length_{query}, num_levels, 4), add
-                additional two dimensions is (w, h) to
-                form reference boxes.
-            key_padding_mask (Tensor): ByteTensor for `query`, with
-                shape [bs, num_key].
-            spatial_shapes (Tensor): Spatial shape of features in
-                different levels. With shape (num_levels, 2),
-                last dimension represents (h, w).
-            level_start_index (Tensor): The start index of each level.
-                A tensor has shape ``(num_levels, )`` and can be represented
-                as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
-
+            query (Tensor): BEV query of Transformer with shape (bs, num_query, embed_dims).
+            key (Tensor): prev_bev. prev_bev is a Tensor with shape (bs*2, bev_h*bev_w, embed_dims) if use temporal self attention.
+            value (Tensor): the same as key. 
+            identity (Tensor): The tensor used for addition, with the same shape as `query`. Default None. If None, `query` will be used.
+            reference_points (Tensor): ref_2d. hybird 2D reference points used in TSA. 
+                                       If `prev_bev` is None, it has shape (bs, h*w, 1, 2).
+                                       else, it has shape (bs*2, h*w, 1, 2).
+            spatial_shapes (Tensor): Spatial shape of features in different levels. With shape (num_levels, 2), last dimension represents (h, w).
+            level_start_index (Tensor): The start index of each level. A tensor has shape ``(num_levels, )`` and can be represented as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
+            Others are None. 
         Returns:
-             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+            query (Tensor): forwarded results with shape (bs, num_query, embed_dims).
         """
-
+        
         if value is None:
             assert self.batch_first
             bs, len_bev, c = query.shape
             value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
-
-            # value = torch.cat([query, query], 0)
-
         if identity is None:
             identity = query
         if query_pos is not None:
             query = query + query_pos
         if not self.batch_first:
-            # change to (bs, num_query ,embed_dims)
             query = query.permute(1, 0, 2)
             value = value.permute(1, 0, 2)
         bs,  num_query, embed_dims = query.shape
@@ -253,15 +227,15 @@ class TemporalSelfAttention(BaseModule):
                 value, spatial_shapes, sampling_locations, attention_weights)
 
         # output shape (bs*num_bev_queue, num_query, embed_dims)
-        # (bs*num_bev_queue, num_query, embed_dims)-> (num_query, embed_dims, bs*num_bev_queue)
+        # (bs*num_bev_queue, num_query, embed_dims) -> (num_query, embed_dims, bs*num_bev_queue)
         output = output.permute(1, 2, 0)
 
         # fuse history value and current value
-        # (num_query, embed_dims, bs*num_bev_queue)-> (num_query, embed_dims, bs, num_bev_queue)
+        # (num_query, embed_dims, bs*num_bev_queue) -> (num_query, embed_dims, bs, num_bev_queue)
         output = output.view(num_query, embed_dims, bs, self.num_bev_queue)
         output = output.mean(-1)
 
-        # (num_query, embed_dims, bs)-> (bs, num_query, embed_dims)
+        # (num_query, embed_dims, bs) -> (bs, num_query, embed_dims)
         output = output.permute(2, 0, 1)
 
         output = self.output_proj(output)

@@ -1,3 +1,3 @@
 from .vovnet import VoVNet
-
-__all__ = ['VoVNet']
+from .bevdetresnet import ResNetForBEVDet_solo
+__all__ = ['VoVNet', 'ResNetForBEVDet_solo']

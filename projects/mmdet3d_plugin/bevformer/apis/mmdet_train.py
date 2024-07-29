@@ -34,11 +34,8 @@ def custom_train_detector(model,
                    eval_model=None,
                    meta=None):
     logger = get_root_logger(cfg.log_level)
-
-    # prepare data loaders
    
     dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
-    #assert len(dataset)==1s
     if 'imgs_per_gpu' in cfg.data:
         logger.warning('"imgs_per_gpu" is deprecated in MMDet V2.0. '
                        'Please use "samples_per_gpu" instead')
@@ -53,17 +50,25 @@ def custom_train_detector(model,
                 f'{cfg.data.imgs_per_gpu} in this experiments')
         cfg.data.samples_per_gpu = cfg.data.imgs_per_gpu
 
+    if cfg.runner.type == 'IterBasedRunner':
+        use_streaming = True
+        warnings.warn('You are using IterBasedRunner and streaming input', UserWarning) 
+    else:
+        use_streaming = False
+        warnings.warn(f'You are using {cfg.runner.type}', UserWarning)
+
     data_loaders = [
         build_dataloader(
             ds,
             cfg.data.samples_per_gpu,
             cfg.data.workers_per_gpu,
-            # cfg.gpus will be ignored if distributed
             len(cfg.gpu_ids),
             dist=distributed,
             seed=cfg.seed,
-            shuffler_sampler=cfg.data.shuffler_sampler,  # dict(type='DistributedGroupSampler'),
-            nonshuffler_sampler=cfg.data.nonshuffler_sampler,  # dict(type='DistributedSampler'),
+            shuffler_sampler=cfg.data.shuffler_sampler,
+            nonshuffler_sampler=cfg.data.nonshuffler_sampler,
+            use_streaming=use_streaming,
+            cfg=cfg,
         ) for ds in dataset
     ]
 
@@ -102,9 +107,10 @@ def custom_train_detector(model,
         warnings.warn(
             'config is now expected to have a `runner` section, '
             'please set `runner` in your config.', UserWarning)
-    else:
-        if 'total_epochs' in cfg:
-            assert cfg.total_epochs == cfg.runner.max_epochs
+    # else:
+    #     if 'total_epochs' in cfg:
+    #         assert cfg.total_epochs == cfg.runner.max_epochs
+    
     if eval_model is not None:
         runner = build_runner(
             cfg.runner,
