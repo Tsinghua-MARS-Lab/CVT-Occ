@@ -7,6 +7,8 @@ Zhangchen Ye<sup>1*</sup>, Tao Jiang<sup>1,2*</sup>, Chenfeng Xu<sup>3</sup>, Yi
 ![network](./docs/figs/network.png)
 
 ## News
+- [2024/09/23]: The preprint version is available on [arXiv](https://arxiv.org/abs/2409.13430).
+
 - [2024/07/29]: Code Released.
 
 - [2024/07/04]: Our paper has been accepted by [ECCV2024](https://eccv2024.ecva.net/).
@@ -41,3 +43,16 @@ All models can be download from [HERE](https://drive.google.com/drive/folders/1m
 | [BEVFormer](projects/configs/cvtocc/bevformer_nuscenes.py)  | 39.04 | **9.57**   | 47.13   | 22.52   | 47.61 | 54.14| 20.39        | 26.44      | 28.12      | 27.46        | 34.53   | 39.69 | 81.44    | **41.14**  | 50.79    | 54.00   | 43.08   | 35.60      |
 | [CVT-Occ (ours)](projects/configs/cvtocc/cvtocc_nuscenes.py)     | **40.34**| 9.45  | **49.46**  | **23.57**  | **49.18** | **55.63**| **23.1**         | **27.85**      | **28.88**      | **29.07**        | **34.97**   | **40.98** | **81.44**    | 40.92      | **51.37**    | **54.25**   | **45.94**   | **39.71**      |
 
+## Citation
+
+If you find our work useful for your research, please consider citing the paper:
+
+```
+@article{ye2024cvtocc,
+  title={CVT-Occ: Cost Volume Temporal Fusion for 3D Occupancy Prediction},
+  author={Ye, Zhangchen and Jiang, Tao and Xu, Chenfeng and Li, Yiming and Zhao, Hang},
+  journal={arXiv preprint arXiv:2409.13430},
+  year={2024},
+  url={https://arxiv.org/abs/2409.13430}
+}
+```
