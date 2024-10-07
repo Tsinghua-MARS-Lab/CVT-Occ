@@ -19,9 +19,9 @@ metas_file: Path to the metadata file, select the corresponding file based on th
 python tools/vis_tools/vis_ref.py
 ```
 
-## vis_ref_dataloader.py
+## vis_ref_dataloader.py & vis_ref_dataloader_nus.py
 ### usage
-Similar to the previous file, but this one uses a dataloader to fetch data directly instead of using saved data.
+Similar to the previous file, but this one uses a dataloader to fetch data directly instead of using saved data. Split the files into `waymo` and `nuscenes` two version. 
 
 ### config parameter
 config: Path to the required config file.
@@ -31,7 +31,8 @@ config: Path to the required config file.
 
 ### command line
 ```sh
-python -m tools.vis_tools.vis_ref_dataloader
+python -m tools.vis_tools.vis_ref_dataloader # waymo
+python -m tools.vis_tools.vis_ref_dataloader_nus # nuscenes
 ```
 
 ## vis_occ.py

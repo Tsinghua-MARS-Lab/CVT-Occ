@@ -31,6 +31,7 @@ class NuSceneOcc(NuScenesDataset):
                  voxel_size=None,
                  CLASS_NAMES=None,
                  **kwargs):
+        super().__init__(*args, **kwargs)
         self.eval_fscore = eval_fscore
         self.queue_length = queue_length
         self.overlap_test = overlap_test
@@ -44,7 +45,6 @@ class NuSceneOcc(NuScenesDataset):
         self.CLASS_NAMES = CLASS_NAMES
         if hasattr(self, 'flag'):
             self.flag = self.flag[::load_interval]
-        super().__init__(*args, **kwargs)
 
     # def __len__(self):
     #     return len(self.data_infos)

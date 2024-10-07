@@ -34,12 +34,12 @@ from projects.mmdet3d_plugin.datasets import nuscenes_occ
 from projects.mmdet3d_plugin.datasets import waymo_temporal_zlt
 from .utils import *
 
-config = "projects/configs/cvtocc/bevformer_waymo.py"
+config = "projects/configs/cvtocc/bevformer_nuscenes.py"
 voxel_size = [0.4, 0.4, 0.4]
-IS_WAYMO = True
+IS_WAYMO = False
 cfg = Config.fromfile(config)
 point_cloud_range = cfg.point_cloud_range
-sampled_queue_length = cfg.sampled_queue_length
+queue_length = cfg.queue_length
 
 if IS_WAYMO:
     NOT_OBSERVED = -1
@@ -81,8 +81,11 @@ mean = [103.530, 116.280, 123.675]
 dataset = build_dataset(cfg.data.train)
 result = dataset.__getitem__(1000)
 
-imgs = result["img"].data[sampled_queue_length - 1]
-lidar2img = result["img_metas"].data[sampled_queue_length - 1]["lidar2img"]  # DEBUG_TMP
+imgs = result["img"].data[queue_length - 1]
+lidar2img = result["img_metas"].data[queue_length - 1]["lidar2img"]  # DEBUG_TMP
+ego2lidar = result["img_metas"].data[queue_length - 1]["ego2lidar"]
+lidar2img = np.stack(lidar2img) # (6, 4, 4)
+lidar2img = np.matmul(lidar2img, ego2lidar)
 
 voxel_label = result["voxel_semantics"]
 voxel_locs = volume2points(voxel_label, voxel_size, point_cloud_range)
