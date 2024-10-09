@@ -1,5 +1,7 @@
 # Preparing Dataset
 
+We use datasets Occ3D-Waymo and Occ3D-NuScenes proposed by [Occ3D](https://github.com/Tsinghua-MARS-Lab/Occ3D/)
+
 ## Occ3D-Waymo
 
 | Type |  Info |

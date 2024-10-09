@@ -23,7 +23,7 @@ Vision-based 3D occupancy prediction is significantly challenged by the inherent
 
 ## Model Zoo
 
-All models can be download from [HERE](https://drive.google.com/drive/folders/1m3r4VrjY1G8N-h7NVyUDc0oOI5g8f7nT?usp=sharing)
+All model weights can be download from <img src="https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png" alt="Google Drive" width="18"/> [HERE](https://drive.google.com/drive/folders/1m3r4VrjY1G8N-h7NVyUDc0oOI5g8f7nT?usp=sharing)
 
 ### Occ3D-Waymo
 
@@ -42,6 +42,13 @@ All models can be download from [HERE](https://drive.google.com/drive/folders/1m
 | [BEVFormer-w/o TSA](projects/configs/cvtocc/bevformer_wotsa_nuscenes.py) | 38.05 | 9.11   | 45.68    | 22.61    | 46.19 | 52.97 | 20.27        | 26.5      | 26.8      | 26.21        | 32.29   | 37.58 | 80.5    | 40.6      | 49.93    | 52.48   | 41.59   | 35.51      |
 | [BEVFormer](projects/configs/cvtocc/bevformer_nuscenes.py)  | 39.04 | **9.57**   | 47.13   | 22.52   | 47.61 | 54.14| 20.39        | 26.44      | 28.12      | 27.46        | 34.53   | 39.69 | 81.44    | **41.14**  | 50.79    | 54.00   | 43.08   | 35.60      |
 | [CVT-Occ (ours)](projects/configs/cvtocc/cvtocc_nuscenes.py)     | **40.34**| 9.45  | **49.46**  | **23.57**  | **49.18** | **55.63**| **23.1**         | **27.85**      | **28.88**      | **29.07**        | **34.97**   | **40.98** | **81.44**    | 40.92      | **51.37**    | **54.25**   | **45.94**   | **39.71**      |
+
+## Acknowledgement
+
+Thanks to these excellent open source projects:
+
+- [Occ3D](https://github.com/Tsinghua-MARS-Lab/Occ3D/) 
+- [SOLOFusion](https://github.com/Divadi/SOLOFusion)
 
 ## Citation
 

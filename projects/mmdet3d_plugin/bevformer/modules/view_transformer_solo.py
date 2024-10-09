@@ -5,7 +5,6 @@ import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# import torch.cuda.amp as amp
 from torch.nn.utils.rnn import pad_sequence
 from scipy.ndimage import gaussian_filter1d
 
@@ -14,13 +13,9 @@ from mmcv.runner import BaseModule, force_fp32, auto_fp16
 from mmcv.cnn import build_conv_layer
 from mmcv.cnn import ConvModule
 
-# from ..builder import NECKS
 from mmdet.models import NECKS
-# from .. import builder
 from mmdet3d.models import builder
-
 from . import ViewTransformerLiftSplatShoot_solo, SELikeModule
-# from ..detectors.solofusion import generate_forward_transformation_matrix
 
 
 def finite_check(x, s="", pdb_save=True):

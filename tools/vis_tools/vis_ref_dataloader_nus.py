@@ -88,6 +88,9 @@ lidar2img = np.stack(lidar2img) # (6, 4, 4)
 lidar2img = np.matmul(lidar2img, ego2lidar)
 
 voxel_label = result["voxel_semantics"]
+
+# DEBUG_TMP 
+# voxel_label = np.ones_like(voxel_label)
 voxel_locs = volume2points(voxel_label, voxel_size, point_cloud_range)
 points = voxel_locs.reshape(-1, 3)
 points_label = voxel_label.reshape(-1)
@@ -106,7 +109,8 @@ points_colors = points_colors[mask]
 points = np.concatenate([points, np.ones_like(points[:, :1])], axis=-1)
 points = points.reshape(-1, 4, 1)
 
-
+# print(imgs.shape)
+# breakpoint()
 imgs[:, 0] += mean[0]
 imgs[:, 1] += mean[1]
 imgs[:, 2] += mean[2]
