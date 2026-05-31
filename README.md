@@ -55,10 +55,12 @@ Thanks to these excellent open source projects:
 If you find our work useful for your research, please consider citing the paper:
 
 ```
-@article{ye2024cvt,
-  title={CVT-Occ: Cost Volume Temporal Fusion for 3D Occupancy Prediction},
+@inproceedings{ye2024cvt,
+  title={Cvt-occ: Cost volume temporal fusion for 3d occupancy prediction},
   author={Ye, Zhangchen and Jiang, Tao and Xu, Chenfeng and Li, Yiming and Zhao, Hang},
-  journal={arXiv preprint arXiv:2409.13430},
-  year={2024}
+  booktitle={European Conference on Computer Vision},
+  pages={381--397},
+  year={2024},
+  organization={Springer}
 }
 ```
